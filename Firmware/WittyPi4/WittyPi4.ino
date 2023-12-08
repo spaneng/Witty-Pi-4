@@ -264,16 +264,16 @@ void loop() {
 
 // initialize the registers and synchronize with EEPROM
 void initializeRegisters() {
-  i2cReg[I2C_ID] = 0x26;
+  i2cReg[I2C_ID] = 0x88;
   i2cReg[I2C_FW_REVISION] = 0x05;
   
   i2cReg[I2C_CONF_ADDRESS] = 0x08;
 
-  i2cReg[I2C_CONF_DEFAULT_ON] = 1;
   i2cReg[I2C_CONF_PULSE_INTERVAL] = 4;
   i2cReg[I2C_CONF_LOW_VOLTAGE] = 255;
   i2cReg[I2C_CONF_BLINK_LED] = 100;
-  i2cReg[I2C_CONF_POWER_CUT_DELAY] = 70;
+  // i2cReg[I2C_CONF_POWER_CUT_DELAY] = 70;
+  i2cReg[I2C_CONF_POWER_CUT_DELAY] = 5;
   i2cReg[I2C_CONF_RECOVERY_VOLTAGE] = 255;
 
   i2cReg[I2C_CONF_ADJ_VIN] = 20;
@@ -284,8 +284,8 @@ void initializeRegisters() {
   i2cReg[I2C_CONF_BELOW_TEMP_POINT] = 0x4b;
   i2cReg[I2C_CONF_OVER_TEMP_POINT] = 0x50;
 
-  i2cReg[I2C_SHUTDOWN_AFTER_INACTIVE] = 0;
-  i2cReg[I2C_CONF_MIN_STARTUP_HOURS] = 0;
+  i2cReg[I2C_SHUTDOWN_AFTER_INACTIVE] = 15;
+  i2cReg[I2C_CONF_MIN_STARTUP_HOURS] = 8;
 
 
   // synchronize configuration with EEPROM
