@@ -367,15 +367,28 @@ set_iout_adjustment()
   fi
 }
 
-set_default_on_delay()
+set_startup_watchdog()
 {
   if [ $(($firmwareRev)) -ge 2 ]; then
-    read -p 'Wait how many seconds before Auto-ON (0~10): ' delay
-  	if [ $delay -ge 0 ] && [ $delay -le 10 ]; then
-  	  i2c_write 0x01 $I2C_MC_ADDRESS $I2C_CONF_DEFAULT_ON_DELAY $delay
-  	  log "Default ON delay set to $delay seconds!" && sleep 2
+    read -p 'Wait how many hours whilst off before force restarting (1-255, 0=disable): ' hrs
+  	if [ $hrs -ge 0 ] && [ $hrs -le 10 ]; then
+  	  i2c_write 0x01 $I2C_MC_ADDRESS $I2C_CONF_MIN_STARTUP_HOURS $hrs
+  	  log "Startup watchdog hours set to $hrs hours!" && sleep 2
   	else
-  	  echo 'Please input from 0 to 10' && sleep 2
+  	  echo 'Please input from 0 to 255' && sleep 2
+  	fi
+  fi
+}
+
+set_i2c_inactivity_limit()
+{
+  if [ $(($firmwareRev)) -ge 2 ]; then
+    read -p 'Wait how many minutes after having no I2C comms before reset (0-250): ' delay
+  	if [ $delay -ge 0 ] && [ $delay -le 250 ]; then
+  	  i2c_write 0x01 $I2C_MC_ADDRESS $I2C_CONF_SHUTDOWN_AFTER_INACTIVE $delay
+  	  log "I2C inactivity watchdog set to $delay minutes!" && sleep 2
+  	else
+  	  echo 'Please input from 0 to 250' && sleep 2
   	fi
   else
     echo 'Please choose from 1 to 8';
@@ -432,23 +445,35 @@ other_settings()
   printf ' [%.2fA]\n' "$ioutAdj"
   local optionCount=8;
   if [ $(($firmwareRev)) -ge 2 ]; then
-    echo -n '  [9] Default ON delay'
-    local dod=$(i2c_read 0x01 $I2C_MC_ADDRESS $I2C_CONF_DEFAULT_ON_DELAY)
+    echo -n '  [9] I2C inactivity watchdog'
+    local dod=$(i2c_read 0x01 $I2C_MC_ADDRESS $I2C_CONF_SHUTDOWN_AFTER_INACTIVE)
     dod=$(hex2dec $dod)
-    echo " [$dod Seconds]"
+    echo " [$dod Minutes]"
     optionCount=9;
+  fi
+  if [ $(($firmwareRev)) -ge 2 ]; then
+    echo -n '  [10] Startup watchdog hours'
+    local dod=$(i2c_read 0x01 $I2C_MC_ADDRESS $I2C_CONF_MIN_STARTUP_HOURS)
+    dod=$(hex2dec $dod)
+    echo " [$dod Hours]"
+    optionCount=10;
+  fi
+  if [ $(($firmwareRev)) -ge 2 ]; then
+    local numResets=$(i2c_read 0x01 $I2C_MC_ADDRESS $I2C_NUM_RESETS)
+    echo "Resets Recorded = $numResets"
   fi
   read -p "Which parameter to set? (1~$optionCount) " action
   case $action in
-      [1]* ) set_default_state;;
-      [2]* ) set_power_cut_delay;;
-      [3]* ) set_pulsing_interval;;
-      [4]* ) set_white_led_duration;;
-      [5]* ) set_dummy_load_duration;;
-      [6]* ) set_vin_adjustment;;
-      [7]* ) set_vout_adjustment;;
-      [8]* ) set_iout_adjustment;;
-      [9]* ) set_default_on_delay;;
+      1 ) set_default_state;;
+      2 ) set_power_cut_delay;;
+      3 ) set_pulsing_interval;;
+      4 ) set_white_led_duration;;
+      5 ) set_dummy_load_duration;;
+      6 ) set_vin_adjustment;;
+      7 ) set_vout_adjustment;;
+      8 ) set_iout_adjustment;;
+      9 ) set_i2c_inactivity_limit;;
+      10 ) set_startup_watchdog;;
       * ) echo "Please choose from 1 to $optionCount";;
   esac
 }

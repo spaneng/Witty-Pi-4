@@ -22,6 +22,7 @@ if [ -z ${I2C_MC_ADDRESS+x} ]; then
   readonly I2C_ALARM2_TRIGGERED=10
   readonly I2C_ACTION_REASON=11
   readonly I2C_FW_REVISION=12
+  readonly I2C_NUM_RESETS=13
 
   readonly I2C_CONF_ADDRESS=16
   readonly I2C_CONF_DEFAULT_ON=17
@@ -59,7 +60,9 @@ if [ -z ${I2C_MC_ADDRESS+x} ]; then
   readonly I2C_CONF_BELOW_TEMP_POINT=44
   readonly I2C_CONF_OVER_TEMP_ACTION=45
   readonly I2C_CONF_OVER_TEMP_POINT=46
-  readonly I2C_CONF_DEFAULT_ON_DELAY=47
+  readonly I2C_CONF_MIN_STARTUP_HOURS=47
+  readonly I2C_CONF_MISC=48
+  readonly I2C_CONF_SHUTDOWN_AFTER_INACTIVE=49
 
   readonly I2C_LM75B_TEMPERATURE=50
   readonly I2C_LM75B_CONF=51

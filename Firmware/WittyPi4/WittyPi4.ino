@@ -57,7 +57,7 @@
 #define I2C_ALARM2_TRIGGERED        10  // 1 if alarm2 (shutdown) has been triggered
 #define I2C_ACTION_REASON           11  // the latest action reason: 1-alarm1; 2-alarm2; 3-click; 4-low voltage; 5-voltage restored; 6-over temperature; 7-below temperature; 8-alarm1 delayed
 #define I2C_FW_REVISION             12  // the firmware revision
-#define I2C_RFU_1                   13  // reserve for future usage
+#define I2C_NUM_RESETS              13  // Number of recorded resets (cycles at 99)
 #define I2C_RFU_2                   14  // reserve for future usage
 #define I2C_RFU_3                   15  // reserve for future usage
 
@@ -101,9 +101,11 @@
 #define I2C_CONF_OVER_TEMP_ACTION   45  // action for over temperature: 0-do nothing; 1-shutdown; 2-startup
 #define I2C_CONF_OVER_TEMP_POINT    46  // set point for over temperature
 
-#define I2C_CONF_DEFAULT_ON_DELAY   47  // the delay (in second) between MCU initialization and turning on Raspberry Pi, when I2C_CONF_DEFAULT_ON = 1
+// #define I2C_CONF_DEFAULT_ON_DELAY   47  // the delay (in second) between MCU initialization and turning on Raspberry Pi, when I2C_CONF_DEFAULT_ON = 1
+#define I2C_CONF_MIN_STARTUP_HOURS  47  // if power has been off for more than this many hours, then force reboot the pi (0 to disable)
 #define I2C_CONF_MISC               48  // 8 bits for miscellaneous configuration. bit-0: set to 1 to disable alarm1 (startup) delay
-#define I2C_CONF_RFU_3              49  // reserve for future usage
+// #define I2C_CONF_RFU_3              49  // reserve for future usage
+#define I2C_SHUTDOWN_AFTER_INACTIVE 49  // if power on, and no I2C comms for X many minutes, then force reboot the pi (0 to disable)
 
 #define I2C_REG_COUNT               50  // number of (non-virtual) I2C registers
 
@@ -164,10 +166,6 @@ volatile boolean wakeupByWatchdog = false;
 
 volatile boolean ledIsOn = false;
 
-volatile unsigned long buttonStateChangeTime = 0;
-
-volatile unsigned long voltageQueryTime = 0;
-
 volatile unsigned int powerCutDelay = 0;
 
 volatile byte skipAdjustRtcCount = 0;
@@ -187,6 +185,13 @@ volatile byte lastButton = 1;
 volatile byte lastSystemUp = 0;
 
 volatile boolean turnOffFromTXD = false;
+
+volatile unsigned long secsSinceLastI2CComms = 0;
+
+volatile unsigned long secsSinceLastPowerChange = 0;
+
+volatile byte numRecordedResets = 0;
+
 
 SoftWireMaster softWireMaster;  // software I2C master
 
@@ -237,13 +242,18 @@ void setup() {
   sei();
 
   // power on or sleep
-  bool defaultOn = (i2cReg[I2C_CONF_DEFAULT_ON] == 1);
-  if (defaultOn) {
-    delay(i2cReg[I2C_CONF_DEFAULT_ON_DELAY] * 1000);  // delay if the value is configured
-    powerOn();  // power on directly
-  } else {
-    sleep();    // sleep and wait for button action
-  }  
+  // bool defaultOn = (i2cReg[I2C_CONF_DEFAULT_ON] == 1);
+  // if (defaultOn) {
+  //   delay(i2cReg[I2C_CONF_DEFAULT_ON_DELAY] * 1000);  // delay if the value is configured
+  //   powerOn();  // power on directly
+  // } else {
+  //   sleep();    // sleep and wait for button action
+  // }
+
+  //// CHANGED TO THE FOLLOWING, THIS ENSURES THAT IN THE EVENT OF A CRASH, THE PI WILL BE POWERED ON
+  delay(2000);
+  powerOn();  // power on directly
+
 }
 
 
@@ -259,6 +269,7 @@ void initializeRegisters() {
   
   i2cReg[I2C_CONF_ADDRESS] = 0x08;
 
+  i2cReg[I2C_CONF_DEFAULT_ON] = 1;
   i2cReg[I2C_CONF_PULSE_INTERVAL] = 4;
   i2cReg[I2C_CONF_LOW_VOLTAGE] = 255;
   i2cReg[I2C_CONF_BLINK_LED] = 100;
@@ -272,6 +283,10 @@ void initializeRegisters() {
 
   i2cReg[I2C_CONF_BELOW_TEMP_POINT] = 0x4b;
   i2cReg[I2C_CONF_OVER_TEMP_POINT] = 0x50;
+
+  i2cReg[I2C_SHUTDOWN_AFTER_INACTIVE] = 0;
+  i2cReg[I2C_CONF_MIN_STARTUP_HOURS] = 0;
+
 
   // synchronize configuration with EEPROM
   for (byte i = 0; i < I2C_REG_COUNT; i ++) {
@@ -400,6 +415,7 @@ void sleep() {
 
 // cut 5V output on GPIO header 
 void cutPower() {
+  secsSinceLastPowerChange = 0;
   powerIsOn = false;
   digitalWrite(PIN_CTRL, 0);
   turnOffFromTXD = false;
@@ -408,6 +424,7 @@ void cutPower() {
 
 // output 5V to GPIO header
 void powerOn() {
+  secsSinceLastPowerChange = 0;
   powerIsOn = true;
   skipTempShutdownCount = 0;
   digitalWrite(PIN_CTRL, 1);
@@ -458,6 +475,11 @@ float updatePowerMode() {
   ADCSRA = bk;  
   updateRegister(I2C_POWER_MODE, (vin > 5.25f) ? 1 : 0);
   return vin;
+}
+
+int updateNumResets() {
+  updateRegister(I2C_NUM_RESETS, numRecordedResets);
+  return numRecordedResets;
 }
 
 
@@ -537,6 +559,8 @@ boolean addressEvent(uint16_t slaveAddress, uint8_t startCount) {
 
 // receives a sequence of data from i2c master (master writes to this device)
 void receiveEvent(int count) {
+  secsSinceLastI2CComms = 0;
+
   if (TinyWireS.available()) {
     i2cIndex = TinyWireS.read();
     if (i2cIndex >= I2C_LM75B_TEMPERATURE && i2cIndex <= I2C_LM75B_TOS) {  // mapped to LM75B's register
@@ -580,6 +604,8 @@ void receiveEvent(int count) {
 
 // i2c master requests data from this device (master reads from this device)
 void requestEvent() {
+  secsSinceLastI2CComms = 0;
+
   float v = 0.0;
   switch (i2cIndex) {
     case I2C_VOLTAGE_IN_I:
@@ -594,6 +620,9 @@ void requestEvent() {
     case I2C_POWER_MODE:
       updatePowerMode();
       break;
+//    case I2C_NUM_RESETS:
+//      updateNumResets();
+//      break;
   }
 
   if (i2cIndex >= I2C_LM75B_TEMPERATURE && i2cIndex <= I2C_LM75B_TOS) {  // mapped to LM75B's register
@@ -628,6 +657,11 @@ ISR (WDT_vect) {
     ledUpTime = 0;
     ledOff();
   }
+
+  // Increment watchdog counters
+  secsSinceLastI2CComms++;
+  secsSinceLastPowerChange++;
+  assessResetWatchdogCounters();
 
   // process low voltage
   processLowVoltageIfNeeded();
@@ -757,6 +791,7 @@ void updateRegister(byte index, byte value) {
 
 // emulate button clicking
 void emulateButtonClick() {
+  secsSinceLastPowerChange = 0;
   isButtonClickEmulated = true;
   pinMode(PIN_BUTTON, OUTPUT);
   digitalWrite(PIN_BUTTON, 0);
@@ -923,6 +958,50 @@ void processLowVoltageIfNeeded() {
   }
 }
 
+// process low voltage
+void assessResetWatchdogCounters() {
+  // If is on, but no comms from Pi for 2 minutes, reboot
+  unsigned long shutdownAfterSecs = (i2cReg[I2C_SHUTDOWN_AFTER_INACTIVE] * 60);
+  if (shutdownAfterSecs > 0 && powerIsOn && secsSinceLastPowerChange > shutdownAfterSecs && secsSinceLastI2CComms > shutdownAfterSecs) {
+    reset();
+  }
+
+  unsigned int minStartupHrs = (i2cReg[I2C_CONF_MIN_STARTUP_HOURS]);
+//  bool enforceDailyWake = i2cReg[I2C_CONF_MISC];
+
+  // If no power change recorded for minStartupHrs, reboot
+  if (minStartupHrs > 0 && !powerIsOn && secsSinceLastPowerChange > (minStartupHrs * 60 * 60)) {
+    reset();
+  }
+}
+
+void reset() {
+  // Reset the Pi by cycling power
+  numRecordedResets++;
+  if (numRecordedResets > 99){
+    numRecordedResets = 1;
+  }
+  updateNumResets();
+  
+  cli(); // disable interrupts
+
+  cutPower();
+  systemIsUp = false;
+
+  // Flash quickly to show reset occuring
+  int counter = 0;
+  while (counter < 10){
+    ledOn();
+    delay(100);
+    ledOff();
+    delay(100);
+    counter++;
+  }
+
+  sei(); // Re-enable all interrupts
+  emulateButtonClick();
+  
+}
 
 // turn off Raspberry Pi only if it is on
 void turnOffIfPowerOn() {
